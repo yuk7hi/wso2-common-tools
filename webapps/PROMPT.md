@@ -1,4 +1,4 @@
-# React Modular Template — Master Prompt (v4)
+# React Modular Template — Master Prompt (v5)
 
 > **Version currency:** All library versions in this prompt were verified against the npm registry on 2026-07-08. The weekly `webapp-template-audit` skill re-verifies them.
 
@@ -22,7 +22,7 @@ It covers every pattern the template needs while staying realistic:
 - **Data tables:** Sortable, filterable, paginated, row actions
 - **Forms:** Multi-field forms with validation, file upload (item images)
 - **API patterns:** Pagination, filtering, search params, optimistic updates, error handling
-- **State management & API:** Shared Redux store with RTK Query
+- **State management & API:** Zustand stores + TanStack Query
 - **Responsive:** Table → card layout on mobile, sidebar → hamburger
 - **Theming:** Dark/light mode toggle
 - **PWA:** Installable, offline shell caching
@@ -75,13 +75,13 @@ Extracted from the demo via a strip-down script. What remains after removing:
 - Demo-specific pages and route modules (inventory, categories, suppliers, dashboard)
 - Demo-specific API handlers and mock data
 - Demo-specific components (data tables, stat cards, etc.)
-- Demo-specific state slices
+- Demo-specific stores and query modules
 
 What stays:
 - Project scaffold (Vite, React Router, TypeScript, Biome)
 - Auth infrastructure (Asgardeo provider, guards, hooks)
-- API client pattern (Redux store with RTK Query)
-- State management pattern (Redux slices per domain)
+- API client pattern (TanStack Query + generated hooks over the worker-proxied client)
+- State management pattern (Zustand store per domain)
 - Oxygen UI setup with theming
 - Layout shell (sidebar, header, breadcrumbs, error boundaries)
 - MSW infrastructure (for future mock needs)
@@ -127,10 +127,10 @@ description: Coding-standard compliance review for the React template and projec
 - guard usage, token handling, session management
 
 ### API Layer
-- RTK Query conventions, generated endpoints, error handling
+- TanStack Query conventions, generated hooks, error handling
 
 ### State Management
-- slice-per-domain, selectors, persistence
+- Zustand store patterns, selectors, persistence
 
 ### Styling & Theming
 - Oxygen UI conventions, no direct `@mui/*` imports, dark mode
@@ -161,7 +161,7 @@ description: Coding-standard compliance review for the React template and projec
 **Deliverables:**
 - `/webapps/spec/openapi.yaml` — complete API spec for all resources (OpenAPI 3.1)
 - `/webapps/webapp-demo/app/mocks/` — MSW handler modules, typed against the spec via `openapi-msw` (browser wiring lands in Part 1); handlers hold in-memory state (mutations reflected in subsequent reads — Parts 7–9 gates depend on it) and are role-aware (Viewer mutations → 403, per Part 9)
-- `/webapps/webapp-demo/app/lib/api-types.ts` — types generated via `openapi-typescript` (the spec is the single source of truth; Part 5 generates the RTK Query endpoints from the same spec)
+- `/webapps/webapp-demo/app/lib/api-types.ts` — types generated via `openapi-typescript` (the spec is the single source of truth; Part 5 generates the TanStack Query hooks from the same spec)
 - `/webapps/webapp-demo/app/lib/mock-data.ts` — realistic mock data factories
 - `/webapps/docs/00-openapi-and-mocking.md` — "Define the API contract first"
 
@@ -277,7 +277,7 @@ description: Coding-standard compliance review for the React template and projec
 - Logout: RP-initiated OIDC logout via the SDK (`end_session_endpoint` with `id_token_hint` + registered `post_logout_redirect_uri`) — clearing local state alone leaves the IdP session alive, and `trySignInSilently()` would sign the user straight back in on the next load
 - OIDC hygiene: authorization code + PKCE (S256) only — implicit flow forbidden; redirect and post-logout URIs registered as exact matches (no wildcards)
 - Role extraction from ID token (Admin vs Viewer)
-- API request integration: a thin wrapper over the SDK's worker-proxied HTTP client, consumed by Part 5's custom RTK Query `baseQuery` — in webWorker mode the main thread never sees the token, so do NOT extract it for `prepareHeaders`-style header injection
+- API request integration: a thin wrapper over the SDK's worker-proxied HTTP client, consumed as Part 5's Orval `mutator` (every generated TanStack Query hook calls through it) — in webWorker mode the main thread never sees the token, so do NOT extract it for header injection
 - Token storage: `webWorker` mode — WSO2's recommended mechanism (tokens isolated in a worker thread, strongest XSS protection):
     • Caveat: worker storage clears on page reload, so the SDK must re-authenticate with the IdP on every reload
     • Mitigation (SDK-supported): silent re-authentication via `trySignInSilently()` / `prompt: "none"` against the active IdP session — no visible re-login, graceful fallback to the login page when no session exists — plus an app-level loading state to avoid flicker. See the [WSO2 silent sign-in guide](https://wso2.com/identity-platform/docs/complete-guides/javascript/manage-tokens-in-apps/#silent-sign-in); its snippets predate the current SDK, so confirm the equivalent API in `@asgardeo/react` during implementation
@@ -298,66 +298,65 @@ description: Coding-standard compliance review for the React template and projec
 
 ---
 
-### Part 5: State Management & API Layer — Redux Toolkit + RTK Query (Decided)
-**What:** Set up Redux Toolkit as the single state management + API data fetching layer. RTK Query replaces TanStack Query — one store, one cache, one DevTools panel.
+### Part 5: State Management & API Layer — Zustand + TanStack Query (Decided)
+**What:** Pair Zustand for client state with TanStack Query for server state. Two focused libraries, zero coupling, one mental model: stores for auth/theme/UI, queries for everything the API owns.
 
-**Why Redux Toolkit over Context API:**
-StockPilot and the team's real applications share patterns that benefit from Redux:
-- **Reference data:** Employee lists, company metadata, dropdown options — consumed across deeply nested component trees. Redux selectors avoid prop drilling and unnecessary re-renders.
-- **Paginated API state + UI state in one system:** RTK Query handles pagination, caching, and invalidation for API data while Redux slices manage auth, theme, and UI state — all in one DevTools session.
-- **Predictable state changes:** Every state mutation is a dispatched action, logged and time-travel-debuggable. Critical for debugging stale dropdown data or cascading API calls.
+**Why Zustand + TanStack Query:**
+- **Client state is small.** Auth session, theme preference, sidebar state, toast queue — maybe 50–100 lines of store code total. Zustand handles this in one `create()` call per store with selector-based subscriptions. No Provider wrapping needed.
+- **Server state is large.** Inventory, claims, dropdown metadata, approval queues — all owned by TanStack Query. Its cache, invalidation, optimistic updates, and infinite queries handle pagination and reference data natively.
+- **Selectors in both.** Zustand selectors prevent unnecessary re-renders. TanStack Query's `select` option transforms cached data without re-fetches.
+- **Discipline comes from the template, not the library.** Heavier state libraries buy enforced convention through ceremony; this prompt provides the same guardrail by prescribing store structure, query patterns, and review rules — without the boilerplate.
+- **Two DevTools panels, no conflict.** Zustand's `devtools` middleware reports to the Redux DevTools *browser extension* (the de-facto generic state-inspector UI — no Redux packages in the code); TanStack Query DevTools render in-app. Both run in dev builds only.
 
-**Store structure (slice-per-domain pattern):**
+**Store & API layer structure** (client state and server state live in sibling trees — same zero-coupling rule as the libraries themselves):
 
 ```
-app/store/
-├── store.ts              — configureStore with middleware
-├── hooks.ts              — useAppSelector, useAppDispatch (typed)
-├── slices/
-│   ├── auth-slice.ts     — user, role, isAuthenticated
-│   ├── theme-slice.ts    — dark/light mode, persisted to localStorage
-│   └── ui-slice.ts       — sidebar open, active modal, toasts
-└── api/
-    ├── base-api.ts       — createApi with a custom baseQuery over the worker-proxied HTTP client (Part 4)
-    ├── generated.ts      — endpoints generated from the OpenAPI spec via @rtk-query/codegen-openapi
-    ├── items-api.ts      — enhanceEndpoints: cache tags, optimistic updates, pagination config
-    ├── categories-api.ts — enhanceEndpoints: cache tags
-    ├── suppliers-api.ts  — enhanceEndpoints: cache tags
-    └── adjustments-api.ts— enhanceEndpoints: cache tags + history
+app/
+├── store/                   — Zustand client state
+│   ├── auth-store.ts        — user, role, isAuthenticated (synced with Asgardeo)
+│   ├── theme-store.ts       — dark/light mode, persisted via `zustand/middleware` persist
+│   └── ui-store.ts          — sidebar open, active modal, toast queue
+└── api/                     — TanStack Query server state
+    ├── query-client.ts      — QueryClient with defaults (staleTime, retry, gcTime)
+    ├── http.ts              — Orval mutator delegating to the worker-proxied HTTP client (Part 4)
+    ├── generated.ts         — TanStack Query hooks generated from the OpenAPI spec via Orval
+    ├── keys.ts              — query key factories per resource (single source of truth for invalidation)
+    ├── items.ts             — pagination query options, optimistic update handlers
+    ├── categories.ts        — invalidation helpers
+    ├── suppliers.ts         — invalidation helpers
+    └── adjustments.ts       — invalidation helpers + history queries
 ```
 
 **Dependencies to pull in:**
-- `@reduxjs/toolkit` + `react-redux`
-- `@rtk-query/codegen-openapi` (dev dep — generates the RTK Query endpoints from `/webapps/spec/openapi.yaml`)
-- No persistence library (`redux-persist` is unmaintained) — persist theme + user preferences with RTK's `createListenerMiddleware` syncing selected slices to localStorage, plus a preloaded-state read at store creation
+- `zustand` (~2 KB)
+- `@tanstack/react-query` + `@tanstack/react-query-devtools` (devtools are excluded from production bundles automatically)
+- `orval` (dev dep — generates typed TanStack Query hooks from `/webapps/spec/openapi.yaml`; chosen over `@hey-api/openapi-ts` for its dedicated TanStack Query output and the `mutator` option, which is the exact seam needed for the worker-proxied HTTP client)
 
 **Deliverables:**
-- Store configuration with RTK Query middleware
-- Typed hooks (`useAppSelector`, `useAppDispatch`)
-- Auth slice: synced with Asgardeo auth state
-- Theme slice: dark/light with localStorage persistence via listener middleware
-- UI slice: sidebar, modals, toast notifications
-- RTK Query endpoints generated from the OpenAPI spec via `@rtk-query/codegen-openapi`, enhanced with cache tags and optimistic updates (the spec stays the single source of truth — no hand-maintained endpoint definitions to drift)
-- Auto-generated React hooks: `useGetItemsQuery`, `useCreateItemMutation`, etc.
-- Custom `baseQuery` delegating requests to the Asgardeo worker-proxied HTTP client (Part 4) — the Bearer token is attached inside the worker and never enters main-thread code, the Redux store, or DevTools
-- Redux DevTools disabled in production (`devTools: import.meta.env.DEV`)
-- Response interceptor: 401 → logout, 403 → show forbidden, 500 → toast
+- Zustand stores for auth, theme, and UI — each a single `create()` call, wrapped in `devtools` middleware with `enabled: import.meta.env.DEV`
+- Theme store persists to localStorage via Zustand's `persist` middleware
+- `QueryClientProvider` wrapping the app with sensible defaults
+- Query key factories per resource in `keys.ts` — every `invalidateQueries` call references a factory, never a hand-typed key array
+- TanStack Query hooks generated from the OpenAPI spec via Orval, with cache invalidation and optimistic updates layered on (the spec stays the single source of truth — no hand-maintained hook definitions to drift)
+- Auto-generated hooks: `useGetItems`, `useCreateItem`, `useUpdateItem`, etc.
+- Orval `mutator` (`app/api/http.ts`) delegates every generated hook's request to the Asgardeo worker-proxied HTTP client (Part 4) — the Bearer token is attached inside the worker and never enters main-thread code, the stores, or DevTools
+- Response handling: 401 → logout, 403 → show forbidden, 500 → toast
 - Optimistic update example on item toggle
 - `/webapps/docs/05-state-management-and-api.md`
 
 **Quality gates:**
-- Redux DevTools show all actions and state changes in dev builds — and are disabled in production
+- Zustand DevTools and TanStack Query DevTools both show state in dev builds — and neither ships in production bundles
 - API calls include the Bearer token automatically (attached inside the worker)
-- Auth state updates on login/logout
+- Auth store updates on login/logout
 - Theme toggle updates store + persists to localStorage
-- RTK Query hooks return typed data matching OpenAPI schemas
+- Generated hooks return typed data matching OpenAPI schemas
 - 401 response triggers logout flow
 - Paginated queries don't waterfall
-- Cache invalidates after mutations
+- Mutations invalidate the affected queries via the key factories — affected lists refetch automatically
 - Every query hook handles loading + error + success + empty states
 - No unnecessary re-renders (React Compiler handles memoization — the profiler pass is a spot check only)
 
-**Review skill additions:** Redux Toolkit conventions, slice-per-domain pattern, RTK Query patterns, selector patterns, persistence patterns
+**Review skill additions:** Zustand store conventions, TanStack Query patterns, query key factory + invalidation patterns, selector patterns, persistence patterns
 
 ---
 
@@ -369,7 +368,7 @@ app/store/
 - Low stock alert table (items below reorder threshold)
 - Recent stock adjustments timeline
 - Stock value over time (simple area chart — `recharts` v3)
-- All data fetched via the generated, typed RTK Query hooks
+- All data fetched via the generated, typed TanStack Query hooks
 - Responsive: stat cards reflow to 2-column then single-column on mobile
 - Loading skeleton states for each section
 - Error state for each section with retry button
@@ -430,7 +429,7 @@ app/store/
 **Deliverables:**
 - Categories: list with inline add (input + button at top), inline edit (click to edit name), inline delete
 - Suppliers: table (simpler than inventory — name, contact, email, phone), add/edit modal, delete confirmation
-- Both integrated with the existing generated RTK Query endpoints
+- Both integrated with the existing generated TanStack Query hooks
 - Both responsive: inline edit works on mobile, modals are full-screen on mobile
 - `/webapps/docs/08-categories-and-suppliers.md`
 
@@ -498,7 +497,8 @@ app/store/
 
 **Deliverables:**
 - Extends the base Vitest + MSW setup from Part 1 with the full provider stack
-- `renderWithProviders()` — wraps components with Router + Redux Store + Auth + Theme + MSW
+- `renderWithProviders()` — wraps components with Router + a fresh `QueryClient` per test (retries disabled so error states fail fast) + Auth + Theme + MSW
+- Zustand store isolation: a shared `resetAllStores()` helper restores each store's initial state in a global `beforeEach` (store state is module-scoped and would otherwise leak between tests)
 - `createMockAuth()` — helper to set auth state per test (Admin, Viewer, unauthenticated)
 - Example tests:
     • Component render test (dashboard stat cards)
@@ -705,7 +705,7 @@ Created once Part 13 produces the template. Monthly deep scan:
 - All MUI imports go through `@wso2/oxygen-ui` re-exports — `@mui/*` import paths are a failing review
 - Modules must not import from sibling modules directly
 - The demo is the source of truth — patterns are extracted, not invented in isolation
-- API calls always go through RTK Query hooks — never raw `fetch` in components
+- API calls always go through TanStack Query hooks — never raw `fetch` in components
 - URL search params for filterable/sortable/paginated state
 
 ### Responsive Design
@@ -735,7 +735,7 @@ Created once Part 13 produces the template. Monthly deep scan:
 - Security headers (CSP + companion set) configured at the Cloudflare level for the app's domain — see Part 12 for the directive list
 - `pnpm audit` passes with zero HIGH/CRITICAL findings
 - No `dangerouslySetInnerHTML` without DOMPurify
-- All API calls go through RTK Query hooks backed by the worker-proxied `baseQuery` — the token is attached inside the SDK worker and never touches main-thread code, the store, or DevTools
+- All API calls go through the generated TanStack Query hooks backed by the worker-proxied Orval `mutator` — the token is attached inside the SDK worker and never touches main-thread code, the stores, or DevTools
 
 ---
 
