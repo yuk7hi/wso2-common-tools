@@ -88,7 +88,7 @@ What stays:
 - PWA setup, CI/CD, testing infrastructure
 - Environment validation, error handling patterns
 
-The strip-down script is the single source of truth for what's "template" vs "demo." Running it produces a clean starting point. A new project runs the generator CLI (Part 13) → answers yes/no toggles → gets a working skeleton.
+The strip-down script is the single source of truth for what's "template" vs "demo." Running it produces a clean starting point. A new project runs the generator CLI (Part 13) → gets a working skeleton.
 
 ### 3. The Learning Guide (`/webapps/docs/`)
 A step-by-step guide to build **the demo** from scratch. Not the template — the full demo. Someone with basic React knowledge follows it and ends up with a working inventory management app. Each part of the guide corresponds to a part of the build and includes:
@@ -156,27 +156,26 @@ description: Coding-standard compliance review for the React template and projec
 ## Part Structure
 
 ### Part 0: OpenAPI Spec & Mock Backend
-**What:** Define the full StockPilot API contract and wire up MSW for local development.
+**What:** Define the full StockPilot API contract, the type-generation pipeline, and the MSW handler modules. The handlers are authored here as standalone modules — browser wiring and the `pnpm dev` verification land in Part 1, once the scaffold exists to run them.
 
 **Deliverables:**
 - `/webapps/spec/openapi.yaml` — complete API spec for all resources (OpenAPI 3.1)
-- `/webapps/webapp-demo/app/mocks/` — MSW browser + server handlers, typed against the spec via `openapi-msw`
+- `/webapps/webapp-demo/app/mocks/` — MSW handler modules, typed against the spec via `openapi-msw` (browser wiring lands in Part 1); handlers hold in-memory state (mutations reflected in subsequent reads — Parts 7–9 gates depend on it) and are role-aware (Viewer mutations → 403, per Part 9)
 - `/webapps/webapp-demo/app/lib/api-types.ts` — types generated via `openapi-typescript` (the spec is the single source of truth; Part 5 generates the RTK Query endpoints from the same spec)
 - `/webapps/webapp-demo/app/lib/mock-data.ts` — realistic mock data factories
 - `/webapps/docs/00-openapi-and-mocking.md` — "Define the API contract first"
 
 **Quality gates:**
-- `pnpm dev` starts with MSW intercepting in the browser
-- Generated types cover every endpoint (compiler errors on wrong request/response shapes)
-- All endpoints return realistic data with simulated latency
-- Error states testable via query params (`?simulateError=500`)
+- Spec validates against OpenAPI 3.1 (`redocly lint` or equivalent)
+- Generated types cover every endpoint and compile standalone (compiler errors on wrong request/response shapes)
+- Every endpoint has a handler + mock-data factory, with simulated latency and error states via query params (`?simulateError=500`) — browser verification happens at Part 1's gate
 
 **Review skill additions:** API contract patterns, mock data conventions, generated types usage
 
 ---
 
 ### Part 1: Project Scaffold
-**What:** Initialize the demo project with Vite 8 (Rolldown bundler), React Router v8 (SPA mode, ESM-only), TypeScript 6.x, Biome 2.x, pnpm, and React Compiler enabled from day one.
+**What:** Initialize the demo project with Vite 8 (Rolldown bundler), React Router v8 (SPA mode, ESM-only), TypeScript 6.x, Biome 2.x, pnpm, and React Compiler enabled from day one. Wire up Part 0's MSW mock backend in the browser, plus the base test infrastructure so TDD (Phase B) works from the first part.
 
 **Deliverables:**
 - Working project skeleton: `pnpm install && pnpm dev` shows "Hello, StockPilot!"
@@ -188,12 +187,15 @@ description: Coding-standard compliance review for the React template and projec
 - `app/root.tsx` — root layout
 - `app/routes.ts` — single index route
 - Environment variable setup (`VITE_API_BASE_URL`, validation at build time)
+- MSW browser wiring (worker registration, dev-only start) — completes Part 0's mock backend
+- Base test infrastructure: Vitest 4 + React Testing Library + MSW node server (`test/setup.ts`) with one smoke test — Part 11 builds the full utilities, coverage thresholds, and E2E on top
 - `/webapps/docs/01-project-scaffold.md`
 
 **Quality gates:**
 - `tsc --noEmit` passes (strict mode)
 - `biome check .` passes with zero errors
-- `pnpm dev` serves the app
+- `pnpm dev` serves the app with MSW intercepting — all Part 0 endpoints return realistic data in the browser
+- `pnpm test` runs and passes the smoke test
 - Project structure follows the agreed conventions
 
 **Review skill additions:** Project structure conventions, Biome config standards, env validation pattern, React Compiler memoization rules (no hand-written `useMemo`/`useCallback`/`React.memo` without a documented justification — the compiler handles it)
@@ -211,6 +213,7 @@ description: Coding-standard compliance review for the React template and projec
 - `Header`: user menu placeholder, mobile menu toggle
 - `Breadcrumbs`: auto-generated from route hierarchy
 - Placeholder routes: `/login`, `/dashboard`, `/inventory`, `/categories`, `/suppliers`, `/profile`
+- Route-level error boundaries (`errorElement` on root + layouts) — the "report error" fallback UI upgrade comes in Part 12
 - `/webapps/docs/02-routing-and-layouts.md`
 
 **Quality gates:**
@@ -218,10 +221,11 @@ description: Coding-standard compliance review for the React template and projec
 - Sidebar collapses to hamburger on mobile
 - Breadcrumbs show correct path
 - 404 page for unknown routes
+- A route that throws renders its error boundary, not a blank screen
 - Each route has a `<title>` via `<Meta>`
 - `tsc --noEmit` passes, `biome check .` passes
 
-**Review skill additions:** Route config conventions, layout composition pattern, responsive patterns
+**Review skill additions:** Route config conventions, layout composition pattern, responsive patterns, error boundary placement
 
 ---
 
@@ -257,8 +261,6 @@ description: Coding-standard compliance review for the React template and projec
 - Components are accessible (Oxygen UI inherits MUI's a11y)
 - `tsc --noEmit` passes with strict mode
 
-**Generator behavior:** If "Include UI component library? → yes" → scaffolds Oxygen UI with theme provider. If "no" → plain CSS Modules, no component library.
-
 **Review skill additions:** Oxygen UI theme structure, component usage conventions, dark mode pattern
 
 ---
@@ -272,9 +274,10 @@ description: Coding-standard compliance review for the React template and projec
 - `AuthGuard` — protects routes, redirects to `/login` if unauthenticated
 - `GuestGuard` — redirects to `/dashboard` if already authenticated
 - Login page with Asgardeo redirect
-- Logout functionality
+- Logout: RP-initiated OIDC logout via the SDK (`end_session_endpoint` with `id_token_hint` + registered `post_logout_redirect_uri`) — clearing local state alone leaves the IdP session alive, and `trySignInSilently()` would sign the user straight back in on the next load
+- OIDC hygiene: authorization code + PKCE (S256) only — implicit flow forbidden; redirect and post-logout URIs registered as exact matches (no wildcards)
 - Role extraction from ID token (Admin vs Viewer)
-- Token attachment to API calls (interceptor pattern via RTK Query `prepareHeaders`)
+- API request integration: a thin wrapper over the SDK's worker-proxied HTTP client, consumed by Part 5's custom RTK Query `baseQuery` — in webWorker mode the main thread never sees the token, so do NOT extract it for `prepareHeaders`-style header injection
 - Token storage: `webWorker` mode — WSO2's recommended mechanism (tokens isolated in a worker thread, strongest XSS protection):
     • Caveat: worker storage clears on page reload, so the SDK must re-authenticate with the IdP on every reload
     • Mitigation (SDK-supported): silent re-authentication via `trySignInSilently()` / `prompt: "none"` against the active IdP session — no visible re-login, graceful fallback to the login page when no session exists — plus an app-level loading state to avoid flicker. See the [WSO2 silent sign-in guide](https://wso2.com/identity-platform/docs/complete-guides/javascript/manage-tokens-in-apps/#silent-sign-in); its snippets predate the current SDK, so confirm the equivalent API in `@asgardeo/react` during implementation
@@ -284,16 +287,14 @@ description: Coding-standard compliance review for the React template and projec
 **Quality gates:**
 - Unauthenticated user → redirected to Asgardeo login → redirected back → authenticated
 - Authenticated user visiting `/login` → redirected to `/dashboard`
-- Logout clears session and redirects to login
-- API calls include Bearer token automatically
+- Logout ends the Asgardeo session (RP-initiated) and redirects to login
+- After logout, a page reload lands on `/login` and does NOT silently re-authenticate
 - Token refresh works transparently (SDK handles this)
 - Page reload re-establishes the session silently via `trySignInSilently()` — the user sees a brief loading state, never a re-login
 - Silent sign-in verified cross-browser — the flow typically relies on a hidden iframe to the IdP, which Safari/Firefox third-party cookie blocking can break; where it fails, the app must fall back to a full redirect re-auth, not an error
 - No auth tokens in localStorage or client bundle source
 
 **Review skill additions:** Auth pattern (guard + provider + hook), token handling rules, Asgardeo config conventions
-
-**Generator behavior:** If "Include authentication? → yes" → scaffolds Asgardeo provider + guards + login page. If "no" → no auth — all routes are public, guards omitted.
 
 ---
 
@@ -313,11 +314,11 @@ app/store/
 ├── store.ts              — configureStore with middleware
 ├── hooks.ts              — useAppSelector, useAppDispatch (typed)
 ├── slices/
-│   ├── auth-slice.ts     — user, role, isAuthenticated, token
+│   ├── auth-slice.ts     — user, role, isAuthenticated
 │   ├── theme-slice.ts    — dark/light mode, persisted to localStorage
 │   └── ui-slice.ts       — sidebar open, active modal, toasts
 └── api/
-    ├── base-api.ts       — createApi with baseQuery (auth token injection)
+    ├── base-api.ts       — createApi with a custom baseQuery over the worker-proxied HTTP client (Part 4)
     ├── generated.ts      — endpoints generated from the OpenAPI spec via @rtk-query/codegen-openapi
     ├── items-api.ts      — enhanceEndpoints: cache tags, optimistic updates, pagination config
     ├── categories-api.ts — enhanceEndpoints: cache tags
@@ -338,13 +339,15 @@ app/store/
 - UI slice: sidebar, modals, toast notifications
 - RTK Query endpoints generated from the OpenAPI spec via `@rtk-query/codegen-openapi`, enhanced with cache tags and optimistic updates (the spec stays the single source of truth — no hand-maintained endpoint definitions to drift)
 - Auto-generated React hooks: `useGetItemsQuery`, `useCreateItemMutation`, etc.
-- Request interceptor: attach Bearer token via `prepareHeaders`
+- Custom `baseQuery` delegating requests to the Asgardeo worker-proxied HTTP client (Part 4) — the Bearer token is attached inside the worker and never enters main-thread code, the Redux store, or DevTools
+- Redux DevTools disabled in production (`devTools: import.meta.env.DEV`)
 - Response interceptor: 401 → logout, 403 → show forbidden, 500 → toast
 - Optimistic update example on item toggle
 - `/webapps/docs/05-state-management-and-api.md`
 
 **Quality gates:**
-- Redux DevTools show all actions and state changes
+- Redux DevTools show all actions and state changes in dev builds — and are disabled in production
+- API calls include the Bearer token automatically (attached inside the worker)
 - Auth state updates on login/logout
 - Theme toggle updates store + persists to localStorage
 - RTK Query hooks return typed data matching OpenAPI schemas
@@ -353,8 +356,6 @@ app/store/
 - Cache invalidates after mutations
 - Every query hook handles loading + error + success + empty states
 - No unnecessary re-renders (React Compiler handles memoization — the profiler pass is a spot check only)
-
-**Generator behavior:** If "Include state management? → yes" → scaffolds Redux store with all slices + RTK Query. If "no" → no store, raw fetch or Context API for minimal needs.
 
 **Review skill additions:** Redux Toolkit conventions, slice-per-domain pattern, RTK Query patterns, selector patterns, persistence patterns
 
@@ -380,7 +381,7 @@ app/store/
 - Error state renders on API failure (test via `?simulateError=500`)
 - Chart renders correctly with mock data
 - Responsive across breakpoints
-- Viewer role: dashboard loads but CRUD actions are hidden
+- Viewer role: dashboard loads but CRUD actions are hidden (ad-hoc role check for now — Part 9 codifies the role-based UI system)
 
 **Review skill additions:** Dashboard patterns, data visualization conventions, loading/error state patterns
 
@@ -496,7 +497,7 @@ app/store/
 **What:** Set up testing with Vitest 4 + React Testing Library + MSW, plus a small Playwright E2E smoke suite for the flows unit tests can't reach (auth redirects, role-based UI, PWA installability).
 
 **Deliverables:**
-- Test setup: `test/setup.ts` (MSW server, custom render with providers)
+- Extends the base Vitest + MSW setup from Part 1 with the full provider stack
 - `renderWithProviders()` — wraps components with Router + Redux Store + Auth + Theme + MSW
 - `createMockAuth()` — helper to set auth state per test (Admin, Viewer, unauthenticated)
 - Example tests:
@@ -507,43 +508,55 @@ app/store/
     • Auth guard test (protected route redirects unauthenticated)
     • Role-based access test (Viewer cannot see edit buttons)
 - Explicit environment decision: Vitest browser mode (stable in Vitest 4, runs component tests in a real browser) vs jsdom — pick one and document why
-- Playwright E2E smoke suite: Asgardeo login redirect round-trip, one CRUD happy path, viewer-role restrictions, PWA manifest + service worker registration
+- Playwright E2E smoke suite: Asgardeo login redirect round-trip, one CRUD happy path, viewer-role restrictions (the PWA manifest/service-worker check joins this suite in Part 12, when the PWA exists)
+- Automated accessibility checks: `vitest-axe` on key components + `@axe-core/playwright` scans of every top-level page in the E2E suite
 - Coverage thresholds: 80% branches, 80% functions, 80% lines (unit/component only — E2E excluded)
 - `/webapps/docs/11-testing.md`
 
 **Quality gates:**
 - `pnpm test` runs all unit/component tests and passes
 - `pnpm test:e2e` runs the Playwright smoke suite and passes
+- axe reports zero violations on top-level pages and key components
 - `pnpm test:coverage` meets thresholds
 - No real network calls in tests (MSW intercepts everything)
 - Tests don't depend on test order
 
-**Review skill additions:** Test structure conventions, render utility patterns, mock patterns
+**Review skill additions:** Test structure conventions, render utility patterns, mock patterns, automated a11y check conventions
 
 ---
 
 ### Part 12: CI/CD, PWA & Production Readiness
-**What:** GitHub Actions pipeline, PWA setup, Docker, env validation, error monitoring placeholder.
+**What:** GitHub Actions pipeline, PWA setup, Choreo deployment, env validation, error monitoring placeholder. Deployment is handled by Choreo — merging a PR on the connected repo deploys automatically, so the CI pipeline's job is to gate what merges.
 
 **Deliverables:**
-- GitHub Actions: lint → type-check → test → build (on PR and push to main)
-- `vite-plugin-pwa`: service worker for offline shell caching, install prompt
-- Multi-stage Dockerfile (dev + production)
-- `docker-compose.yml` for local dev
+- GitHub Actions, structured for the monorepo architecture:
+    • Central reusable workflow (hosted once, versioned by tag) carrying the pipeline — lint → type-check → test → build → Lighthouse CI → bundle budgets — parameterized by `working-directory`
+    • Per-monorepo umbrella workflow at the repo root `.github/workflows/` (GitHub only reads workflows there): always runs on PRs, auto-discovers template webapps via the generator-stamped `package.json` marker, runs the reusable workflow for changed apps only (`dorny/paths-filter`), and ends in a `summary` job with one stable check name that always reports — naive path-filtered required checks hang PRs that don't touch a webapp
+    • Merge gating: an org-level ruleset requires the `summary` check, targeted by a custom repository property on opted-in repos — legacy webapps without the marker are untouched, new template webapps are discovered with zero workflow edits
+    • Hardening: actions pinned to commit SHAs, top-level `permissions: contents: read` (elevated per job only as needed), `pnpm install --frozen-lockfile`
+- `vite-plugin-pwa`: service worker precaching the app shell ONLY — API origin excluded from runtime caching (`NetworkOnly`), Cache Storage cleared on logout; install prompt
+- CD is handled by Choreo: the repo connects as a web application component and deployment happens automatically on PR merge
 - Environment validation at build time (missing `VITE_*` vars fail the build)
 - Error boundary component with fallback UI and "report error" button (placeholder)
-- CSP headers configured — Emotion injects inline `<style>` tags, so wire a nonce through Emotion's `CacheProvider` rather than shipping `style-src 'unsafe-inline'`
-- Lighthouse targets: Performance ≥ 90, Accessibility ≥ 95, Best Practices ≥ 90 (Lighthouse removed its PWA category in v12 — installability is verified by the Playwright manifest/service-worker check instead)
+- Security headers, configured at the Cloudflare level for the app's domain (Transform Rules or a Worker — `<meta>` tags cannot deliver `frame-ancestors` or HSTS, so header-level config matters):
+    • CSP: `default-src 'self'; script-src 'self'; connect-src 'self' <API origin> <Asgardeo origin>; frame-src <Asgardeo origin>; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'` — `frame-src` is required by silent sign-in and `worker-src blob:` by webWorker token storage; a naive strict CSP silently breaks both
+    • `style-src`: Emotion injects inline styles — either accept `style-src 'unsafe-inline'` (styles only, scripts stay strict) and document the tradeoff, or inject a fresh per-request nonce via a Cloudflare Worker (HTMLRewriter on the HTML + matching CSP header, wired into Emotion's `CacheProvider`); a build-time nonce is a constant and adds nothing
+    • Companions: `Strict-Transport-Security` (or Cloudflare's HSTS setting), `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin` (OIDC redirects carry `code`/`state` in URLs), `Permissions-Policy`
+- Lighthouse CI (`@lhci/cli`) job asserting Performance ≥ 90, Accessibility ≥ 95, Best Practices ≥ 90 on the built app (Lighthouse removed its PWA category in v12 — installability is verified by the Playwright manifest/service-worker check instead)
+- Bundle-size budgets enforced in CI (`size-limit` or equivalent), set per entry chunk — watch closely, since Oxygen UI bundles all of MUI v7 + MUI X
+- `CONTRIBUTING.md`: how to run the gates locally, PR expectations, review process
 - `/webapps/docs/12-cicd-and-production.md`
 
 **Quality gates:**
 - PR workflow: all checks must pass before merge
-- `docker build` succeeds, `docker compose up` runs full app
-- Lighthouse audit meets targets
+- Merged PR auto-deploys via Choreo; the deployed app responds with the full security header set (verify with `curl -I`)
+- Lighthouse CI and bundle-budget jobs fail the pipeline on regression
 - Missing env vars fail at build, not runtime
 - PWA: install prompt appears in Chromium (iOS Safari has no prompt — Add to Home Screen only), offline shell works
+- Playwright: PWA manifest + service worker registration verified; API responses never appear in Cache Storage
+- Playwright: login and silent sign-in work with the production CSP enforced
 
-**Review skill additions:** CI/CD conventions, Docker patterns, PWA checklist
+**Review skill additions:** CI/CD conventions, Choreo deployment conventions, PWA checklist
 
 ---
 
@@ -559,20 +572,22 @@ app/store/
     • Produces `/webapps/webapp-template/` directory
     • Script is versioned alongside the demo — always in sync
 - `scripts/create-app.ts` (generator CLI):
-    • Interactive prompts (yes/no toggles per feature)
-    • Reads the template as base
-    • Toggles features by conditionally including files and dependencies
-    • Wires providers based on selected features
-    • Outputs a working project with only the selected features
-- Verification: run extraction → run generator with "all yes" → result matches demo (minus demo-specific pages)
+    • Prompts for the destination directory and project metadata (name, package name, Asgardeo org/client ID, API base URL)
+    • Copies the template into the destination and applies the metadata substitutions
+    • Stamps the template version marker into the generated `package.json` (e.g. `"wso2Template": "webapp@<version>"`) — the CI umbrella discovers apps by this marker (Part 12), and the audit skill uses it to find apps on outdated template versions
+    • Refuses to overwrite a non-empty destination
+    • Outputs a working project
+- Template versioning: semver tags + `CHANGELOG.md` recording template-affecting changes per release (consumers upgrade by reviewing the changelog against their generated baseline)
+- CI drift guard: a pipeline job (added once this part lands) that runs extraction → generator → install + build on the output, so demo changes that silently break the template fail the PR
+- Verification: run extraction → run generator → the output installs, builds, and runs
 - `/webapps/docs/13-extraction-and-generator.md`
 
 **Quality gates:**
 - Running extraction produces a clean template in `/webapps/webapp-template/`
-- Generator with all "no" produces a minimal working app (just routing + layouts)
-- Generator with all "yes" produces an app structurally identical to the demo
-- Generator with mixed toggles produces consistent, working combinations
+- Generated project is structurally identical to the template apart from metadata substitutions
+- Generated project passes the full gate set out of the box: `pnpm install`, `tsc --noEmit`, `biome check .`, `pnpm test`, `pnpm dev`
 - Extraction script is deterministic (same demo → same template every time)
+- The CI drift guard runs on every PR and fails when extraction or generation breaks
 
 **Review skill additions:** Extraction/generator patterns (meta — about the template itself)
 
@@ -588,6 +603,7 @@ app/store/
 - Architecture Decision Records (ADRs) for key choices
 - "Common recipes" section: how to add a new page, how to add a new API endpoint, etc.
 - Search functionality
+- Docs deploy workflow: the site builds and publishes (GitHub Pages or similar) on merge to main
 - `/webapps/docs/14-documentation-site.md` (meta-doc about how the docs site was built)
 
 **Quality gates:**
@@ -648,10 +664,10 @@ For **each** part, follow this exact cycle:
 
 ---
 
-## Post-Build: Quality Agent Skills
+## Quality Agent Skills
 
 ### Skill: `webapp-template-audit`
-Weekly scheduled agent (Claude Code routine / cron) that checks:
+Created alongside Part 1 — the build spans weeks, and version pins need tracking from the start, not only post-build. Weekly scheduled agent (Claude Code routine / cron) that checks:
 - Dependency freshness (major version bumps in core deps)
 - React Router release notes for breaking changes (yearly major cadence — expect v9)
 - Asgardeo SDK updates (`@asgardeo/react` — pre-1.0, watch for breaking API changes and the 1.0 release)
@@ -659,10 +675,11 @@ Weekly scheduled agent (Claude Code routine / cron) that checks:
 - TypeScript version currency — including TypeScript 7 (the Go-native compiler, already at RC): plan the migration when it goes stable
 - React Compiler and Vite (Rolldown) release notes
 - Any CVEs in dependencies
+- Template adoption: scan for generated apps (via the `wso2Template` marker) running outdated template versions
 - Report: ✅ current / ⚠️ minor updates / 🔴 major migration needed / 🚨 security patch
 
 ### Skill: `webapp-template-security-scan`
-Monthly deep scan:
+Created once Part 13 produces the template. Monthly deep scan:
 - `pnpm audit` with zero-tolerance for HIGH/CRITICAL
 - Static analysis for secrets, XSS vectors, unsafe DOM manipulation
 - JWT token storage audit
@@ -699,6 +716,12 @@ Monthly deep scan:
 - Test on viewport widths: 375px, 768px, 1024px, 1440px
 - Data tables → card layout on mobile
 
+### Language & Formatting
+- English-only — no i18n framework (internal tooling; the retrofit cost is accepted in the unlikely event it's ever needed)
+- Dates and times displayed in ISO 8601 (`YYYY-MM-DD`, `YYYY-MM-DD HH:mm`) regardless of the viewer's locale — shared screenshots stay unambiguous when troubleshooting across regions
+- Timestamps stored and transferred as UTC ISO 8601; displayed in local time, with the UTC offset shown where ambiguity matters (e.g. audit trails, stock adjustment history)
+- Numbers and currency formatted via `Intl.NumberFormat` with a pinned locale (`en-US`) — consistent separators in every screenshot
+
 ### Documentation Standards
 - Each learning guide completable by a mid-level React developer in ≤ 2 hours
 - Every code block must be copy-pasteable and runnable
@@ -709,10 +732,10 @@ Monthly deep scan:
 ### Security Baseline
 - No secrets in client code (verified by static analysis)
 - Auth tokens handled by the Asgardeo SDK with `webWorker` storage (WSO2's recommended mode; see Part 4) — never localStorage
-- CSP headers in production build
+- Security headers (CSP + companion set) configured at the Cloudflare level for the app's domain — see Part 12 for the directive list
 - `pnpm audit` passes with zero HIGH/CRITICAL findings
 - No `dangerouslySetInnerHTML` without DOMPurify
-- All API calls use RTK Query hooks with automatic auth header injection via `prepareHeaders`
+- All API calls go through RTK Query hooks backed by the worker-proxied `baseQuery` — the token is attached inside the SDK worker and never touches main-thread code, the store, or DevTools
 
 ---
 
@@ -741,12 +764,11 @@ The project is complete when:
 - [ ] All 15 parts (0–14) are built, reviewed, and merged
 - [ ] `pnpm dev` in `/webapps/webapp-demo/` runs the full StockPilot app with all features
 - [ ] Running the extraction script produces a clean template in `/webapps/webapp-template/`
-- [ ] Generator CLI with all "no" produces a minimal working app
-- [ ] Generator CLI with all "yes" reproduces the demo structure (minus demo content)
+- [ ] Generator CLI produces a working project that passes all quality gates out of the box
 - [ ] All 15 learning guides can be followed to build StockPilot from scratch
 - [ ] `webapp-template-review` skill contains rules for every pattern
 - [ ] The app works on mobile web (responsive + PWA installable)
-- [ ] Lighthouse ≥ 90 on Performance / Accessibility / Best Practices; PWA installability verified via the Playwright manifest + service worker check
+- [ ] Lighthouse CI green: Performance ≥ 90, Accessibility ≥ 95, Best Practices ≥ 90; PWA installability verified via the Playwright manifest + service worker check
 - [ ] Zero HIGH/CRITICAL `pnpm audit` findings in both demo and template
 - [ ] `webapp-template-audit` and `webapp-template-security-scan` skills are active
 - [ ] CI/CD pipeline catches regressions before merge
