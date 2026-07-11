@@ -1,6 +1,6 @@
-# React Modular Template — Master Prompt (v5)
+# React Modular Template — Master Prompt (v6)
 
-> **Version currency:** All library versions in this prompt were verified against the npm registry on 2026-07-08. The weekly `webapp-template-audit` skill re-verifies them.
+> **Version currency:** All library versions in this prompt were verified against the npm registry on 2026-07-11. The weekly `webapp-template-audit` skill re-verifies them.
 
 > **For Claude Code:** This is the governing prompt for the entire project. Use plan mode for per-part planning, subagents (Agent tool) for implementation and delegated reviews, and the `/code-review` skill as the quality gate after each part.
 
@@ -101,17 +101,36 @@ A step-by-step guide to build **the demo** from scratch. Not the template — th
 
 ---
 
-## The `webapp-template-review` Skill
+## The `webapp-review` Skill
 
-A Claude Code skill at `.claude/skills/webapp-template-review/SKILL.md`, created at Part 0 (empty skeleton) and grown throughout: each part's Phase D (see Iterative Workflow) patches it with the patterns, standards, and conventions that part established. By Part 14 it is a comprehensive coding standard in executable form.
+A Claude Code skill at `.claude/skills/webapp-review/SKILL.md`, created at Part 0 (empty skeleton) and grown throughout: each part's Phase D (see Iterative Workflow) patches it with the patterns, standards, and conventions that part established. By Part 14 it is a comprehensive coding standard in executable form.
 
-**Usage:** After any code change to the template or a project built from it, invoke `/webapp-template-review` to run a compliance check — it is the canonical reference for every pattern, the pre-commit verification, and the onboarding material.
+**Usage:** After any code change to the template or a project built from it, invoke `/webapp-review` to run a compliance check — it is the canonical reference for every pattern, the pre-commit verification, and the onboarding material.
 
-**Structure (each section accumulates rules every part):**
+**File tree:** One master `SKILL.md` (~10k chars) with cross-cutting rules, plus per-topic detail files under `references/`. Each part's Phase D patches the relevant reference file — the master only grows when a rule spans multiple topics. This keeps the master scannable and prevents any single file from ballooning past the practical limit.
+
+```
+.claude/skills/webapp-review/
+├── SKILL.md                    # Master: overview, triggers, cross-cutting rules
+├── references/
+│   ├── typescript.md           # Strict mode, no any, named exports, barrel rules
+│   ├── react-routing.md        # Component structure, error boundaries, route config
+│   ├── auth.md                 # Asgardeo guard patterns, token handling
+│   ├── api-layer.md            # TanStack Query conventions, Orval mutator, key factories
+│   ├── state-management.md     # Zustand store patterns, selectors, persistence
+│   ├── styling-theming.md      # Oxygen UI imports (no @mui/*), dark mode
+│   ├── forms-validation.md     # RHF + Zod 4 patterns, server error mapping
+│   ├── testing.md              # renderWithProviders, MSW handlers, store isolation
+│   ├── security.md             # No secrets in client, CSP, DOMPurify
+│   ├── accessibility.md        # ARIA, focus management, touch targets
+│   └── performance.md          # Loading states, bundle discipline, no waterfalls
+```
+
+**Section overview (each section accumulates rules every part):**
 
 ```markdown
 ---
-name: webapp-template-review
+name: webapp-review
 description: Coding-standard compliance review for the React template and projects built from it. Use when reviewing any code change, for pre-commit verification, or to onboard new team members — the skill IS the coding standard.
 ---
 
@@ -161,8 +180,8 @@ description: Coding-standard compliance review for the React template and projec
 **Deliverables:**
 - `/webapps/spec/openapi.yaml` — complete API spec for all resources (OpenAPI 3.1)
 - `/webapps/webapp-demo/app/mocks/` — MSW handler modules, typed against the spec via `openapi-msw` (browser wiring lands in Part 1); handlers hold in-memory state (mutations reflected in subsequent reads — Parts 7–9 gates depend on it) and are role-aware (Viewer mutations → 403, per Part 9)
-- `/webapps/webapp-demo/app/lib/api-types.ts` — types generated via `openapi-typescript` (the spec is the single source of truth; Part 5 generates the TanStack Query hooks from the same spec)
-- `/webapps/webapp-demo/app/lib/mock-data.ts` — realistic mock data factories
+- `/webapps/webapp-demo/app/lib/apiTypes.ts` — types generated via `openapi-typescript` (the spec is the single source of truth; Part 5 generates the TanStack Query hooks from the same spec)
+- `/webapps/webapp-demo/app/lib/mockData.ts` — realistic mock data factories
 - `/webapps/docs/00-openapi-and-mocking.md` — "Define the API contract first"
 
 **Quality gates:**
@@ -175,15 +194,15 @@ description: Coding-standard compliance review for the React template and projec
 ---
 
 ### Part 1: Project Scaffold
-**What:** Initialize the demo project with Vite 8 (Rolldown bundler), React Router v8 (SPA mode, ESM-only), TypeScript 6.x, Biome 2.x, pnpm, and React Compiler enabled from day one. Wire up Part 0's MSW mock backend in the browser, plus the base test infrastructure so TDD (Phase B) works from the first part.
+**What:** Initialize the demo project with Vite 8 (Rolldown bundler), React Router v8 (SPA mode, ESM-only), TypeScript 7.x, Biome 2.x, pnpm, and React Compiler enabled from day one. Wire up Part 0's MSW mock backend in the browser, plus the base test infrastructure so TDD (Phase B) works from the first part.
 
 **Deliverables:**
 - Working project skeleton: `pnpm install && pnpm dev` shows "Hello, StockPilot!"
 - `vite.config.ts` with React Router plugin + React Compiler (`babel-plugin-react-compiler`)
 - `react-router.config.ts` with `ssr: false`
-- `tsconfig.json` with path aliases and ES2022 target (React Router v8 is ESM-only; TS 6 defaults: strict on, `esModuleInterop` always enabled, `classic` resolution removed)
+- `tsconfig.json` with path aliases and ES2022 target (React Router v8 is ESM-only; TS 7's compiler drops the JS Compiler API — safe here since the stack uses `tsx`, Vite/Vitest, and Biome instead of `ts-node`/`ts-jest`/`ts-loader`/`typescript-eslint`, none of which this project depends on; `esModuleInterop` always enabled, `classic` resolution removed)
 - `.nvmrc` + `engines` field pinning Node 24 LTS (React Router v8 supports Active LTS only)
-- `biome.json` with lint + format rules
+- `biome.json` with lint + format rules, including `useFilenamingConvention` enforcing the naming standard (see Constraints)
 - `app/root.tsx` — root layout
 - `app/routes.ts` — single index route
 - Environment variable setup (`VITE_API_BASE_URL`, validation at build time)
@@ -313,11 +332,11 @@ description: Coding-standard compliance review for the React template and projec
 ```
 app/
 ├── store/                   — Zustand client state
-│   ├── auth-store.ts        — user, role, isAuthenticated (synced with Asgardeo)
-│   ├── theme-store.ts       — dark/light mode, persisted via `zustand/middleware` persist
-│   └── ui-store.ts          — sidebar open, active modal, toast queue
+│   ├── authStore.ts         — user, role, isAuthenticated (synced with Asgardeo)
+│   ├── themeStore.ts        — dark/light mode, persisted via `zustand/middleware` persist
+│   └── uiStore.ts           — sidebar open, active modal, toast queue
 └── api/                     — TanStack Query server state
-    ├── query-client.ts      — QueryClient with defaults (staleTime, retry, gcTime)
+    ├── queryClient.ts       — QueryClient with defaults (staleTime, retry, gcTime)
     ├── http.ts              — Orval mutator delegating to the worker-proxied HTTP client (Part 4)
     ├── generated.ts         — TanStack Query hooks generated from the OpenAPI spec via Orval
     ├── keys.ts              — query key factories per resource (single source of truth for invalidation)
@@ -367,7 +386,7 @@ app/
 - Stat cards: total items, total stock value, low stock count, active suppliers (Oxygen UI `StatCard`)
 - Low stock alert table (items below reorder threshold)
 - Recent stock adjustments timeline
-- Stock value over time (simple area chart — `recharts` v3)
+- Stock value over time (simple area chart — `@wso2/oxygen-ui-charts-react` v0.12.0, built on Recharts)
 - All data fetched via the generated, typed TanStack Query hooks
 - Responsive: stat cards reflow to 2-column then single-column on mobile
 - Loading skeleton states for each section
@@ -633,8 +652,8 @@ For **each** part, follow this exact cycle:
 
 ### Phase C: Evaluate & Review (Two-Stage Gate)
 1. Run `/code-review` on the part's diff
-2. **Stage 1 — Standards Compliance Review** (run `/webapp-template-review`):
-   - Does the code match the growing `webapp-template-review` skill?
+2. **Stage 1 — Standards Compliance Review** (run `/webapp-review`):
+   - Does the code match the growing `webapp-review` skill?
    - Does it follow React 19 / React Router v8 best practices?
    - Are hooks used correctly (rules of hooks)?
    - Is TypeScript strict mode satisfied?
@@ -649,7 +668,7 @@ For **each** part, follow this exact cycle:
 
 ### Phase D: Update Review Skill
 1. Identify new patterns, standards, and conventions introduced in this part
-2. Patch `webapp-template-review` skill with additions
+2. Patch `webapp-review` skill with additions
 3. Verify: run the skill against the demo code to confirm it catches the patterns
 
 ### Phase E: Push & Tag
@@ -672,7 +691,7 @@ Created alongside Part 1 — the build spans weeks, and version pins need tracki
 - React Router release notes for breaking changes (yearly major cadence — expect v9)
 - Asgardeo SDK updates (`@asgardeo/react` — pre-1.0, watch for breaking API changes and the 1.0 release)
 - Oxygen UI releases and its bundled dependency versions (it bundles MUI v7 while npm latest is v9 — confirm every release that all MUI imports still come through Oxygen's re-exports)
-- TypeScript version currency — including TypeScript 7 (the Go-native compiler, already at RC): plan the migration when it goes stable
+- TypeScript version currency — including any Compiler-API-dependent tooling (e.g. `ts-node`, `ts-jest`, `@typescript-eslint/parser`) creeping into the dependency tree, since none of those are compatible with the native compiler
 - React Compiler and Vite (Rolldown) release notes
 - Any CVEs in dependencies
 - Template adoption: scan for generated apps (via the `wso2Template` marker) running outdated template versions
@@ -699,6 +718,13 @@ Created once Part 13 produces the template. Monthly deep scan:
 - File size: components ≤ 300 lines, utilities ≤ 150 lines
 - Named exports only (no default exports except route components)
 - React Compiler is on — hand-written `useMemo`/`useCallback`/`React.memo` requires a documented justification
+- Naming conventions (Airbnb style, enforced via Biome's `useFilenamingConvention`):
+    • Directories: `kebab-case` (`inventory-crud/`)
+    • Files exporting a component, type, or enum: `PascalCase`, matching the export (`LoginPage.tsx`, `UserRole.ts`)
+    • All other files (stores, utils, hooks, config): `camelCase` (`authStore.ts`, `queryClient.ts`) — tool-mandated names (`vite.config.ts`, `root.tsx`, `routes.ts`) keep their required form
+    • Functions & variables: `camelCase` (`useAuth`, `itemCount`); components, types & enums: `PascalCase`
+    • Constants: `UPPER_SNAKE_CASE` (`MAX_RETRY_COUNT`, `DEFAULT_STALE_TIME`)
+- Tests co-located with source using `.test` suffix (`authStore.test.ts` next to `authStore.ts`)
 
 ### Architecture
 - Every module exposes a clean public API (a deliberate, hand-curated `index.ts` barrel — never whole-directory re-exports); within a module, use direct imports (broad barrels hurt Vite dev cold-start and tree-shaking, and invite circular imports)
@@ -744,12 +770,12 @@ Created once Part 13 produces the template. Monthly deep scan:
 To kick off this project:
 
 1. All artifacts live under `/webapps/` in this repo — this prompt runs from `/webapps/PROMPT.md`
-2. Create the `webapp-template-review` skill (empty skeleton)
+2. Create the `webapp-review` skill (empty skeleton)
 3. Begin with **Part 0** — OpenAPI spec + MSW mock backend
 
 **First steps:**
 ```
-1. Create the empty review skill at .claude/skills/webapp-template-review/SKILL.md
+1. Create the empty review skill at .claude/skills/webapp-review/SKILL.md
 2. Enter plan mode and write a detailed implementation plan for Part 0:
    OpenAPI Spec & Mock Backend for StockPilot.
    Save to _plans/
@@ -766,7 +792,7 @@ The project is complete when:
 - [ ] Running the extraction script produces a clean template in `/webapps/webapp-template/`
 - [ ] Generator CLI produces a working project that passes all quality gates out of the box
 - [ ] All 15 learning guides can be followed to build StockPilot from scratch
-- [ ] `webapp-template-review` skill contains rules for every pattern
+- [ ] `webapp-review` skill contains rules for every pattern
 - [ ] The app works on mobile web (responsive + PWA installable)
 - [ ] Lighthouse CI green: Performance ≥ 90, Accessibility ≥ 95, Best Practices ≥ 90; PWA installability verified via the Playwright manifest + service worker check
 - [ ] Zero HIGH/CRITICAL `pnpm audit` findings in both demo and template
