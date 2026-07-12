@@ -1,4 +1,4 @@
-# React Modular Template — Master Prompt (v6)
+# React Modular Template — Master Prompt (v7)
 
 > **Version currency:** All library versions in this prompt were verified against the npm registry on 2026-07-11. The weekly `webapp-template-audit` skill re-verifies them.
 
@@ -6,7 +6,7 @@
 
 **Goal:** Build a production-grade, modular React SPA template by first building a **full-featured demo app** (an inventory management system called "StockPilot"), then extracting reusable infrastructure into a configurable template via a strip-down script. Delivered as three artifacts: (1) the working demo, (2) the extractable template, and (3) a step-by-step learning guide that teaches someone to build the demo from scratch.
 
-**Architecture:** React Router v8 framework mode with SPA config (`ssr: false`). The frontend is a pure API consumer — all backends are separate services (Java, Go, or Ballerina). During development, the backend is mocked via MSW (Mock Service Worker) driven by an OpenAPI 3.1 spec (3.1 chosen deliberately over 3.2 — codegen tooling support for 3.2 still lags). The same spec later generates the real backend — a sibling backend template + demo is planned in this repo to replace the MSW mock, which is why the frontend artifacts carry the `webapp-` prefix. Mobile support via responsive design + PWA, not React Native.
+**Architecture:** React Router v8 framework mode with SPA config (`ssr: false`). The frontend is a pure API consumer — all backends are separate services (Java, Go, or Ballerina). The frontend talks to a real HTTP backend from day one: a Go backend materialized from the OpenAPI 3.1 spec as soon as the spec is generated (3.1 chosen deliberately over 3.2 — codegen tooling support for 3.2 still lags). The backend's internals — including its data source — are owned by the sibling backend template + demo planned in this repo (hence the `webapp-` prefix on the frontend artifacts); this plan treats the backend as a black box behind the spec. MSW appears only in tests — a Node-side interceptor for Vitest, never registered in the browser. Mobile support via responsive design + PWA, not React Native.
 
 **Core principle:** The demo is the source of truth. Every standard, pattern, and convention lives in the demo first. The template is a byproduct of stripping demo-specific content. The review skill grows alongside the demo — each new pattern gets codified immediately.
 
@@ -84,7 +84,7 @@ What stays:
 - State management pattern (Zustand store per domain)
 - Oxygen UI setup with theming
 - Layout shell (sidebar, header, breadcrumbs, error boundaries)
-- MSW infrastructure (for future mock needs)
+- MSW node test infrastructure (typed test handlers pattern — no browser mocking; generated projects point at their real backend)
 - PWA setup, CI/CD, testing infrastructure
 - Environment validation, error handling patterns
 
@@ -116,7 +116,7 @@ A Claude Code skill at `.claude/skills/webapp-review/SKILL.md`, created at Part 
 │   ├── typescript.md           # Strict mode, no any, named exports, barrel rules
 │   ├── react-routing.md        # Component structure, error boundaries, route config
 │   ├── auth.md                 # Asgardeo guard patterns, token handling
-│   ├── api-layer.md            # TanStack Query conventions, Orval mutator, key factories
+│   ├── api-layer.md            # TanStack Query conventions, Orval mutator, key factories, single codegen pipeline
 │   ├── state-management.md     # Zustand store patterns, selectors, persistence
 │   ├── styling-theming.md      # Oxygen UI imports (no @mui/*), dark mode
 │   ├── forms-validation.md     # RHF + Zod 4 patterns, server error mapping
@@ -174,27 +174,35 @@ description: Coding-standard compliance review for the React template and projec
 
 ## Part Structure
 
-### Part 0: OpenAPI Spec & Mock Backend
-**What:** Define the full StockPilot API contract, the type-generation pipeline, and the MSW handler modules. The handlers are authored here as standalone modules — browser wiring and the `pnpm dev` verification land in Part 1, once the scaffold exists to run them.
+### Part 0: OpenAPI Spec & Backend Contract
+**What:** Define the full StockPilot API contract and the type-generation pipeline. Generating the spec materializes the Go backend — a sibling deliverable built to the spec, which this plan treats as a black box and simply consumes. MSW enters only as test infrastructure: generated handlers for the Vitest node server (wired in Part 1), never registered in the browser. Codegen is a single Orval pipeline: model types now, TanStack Query hooks from the same config in Part 5 — one type set for app code, tests, and handlers.
 
 **Deliverables:**
 - `/webapps/spec/openapi.yaml` — complete API spec for all resources (OpenAPI 3.1)
-- `/webapps/webapp-demo/app/mocks/` — MSW handler modules, typed against the spec via `openapi-msw` (browser wiring lands in Part 1); handlers hold in-memory state (mutations reflected in subsequent reads — Parts 7–9 gates depend on it) and are role-aware (Viewer mutations → 403, per Part 9)
-- `/webapps/webapp-demo/app/lib/apiTypes.ts` — types generated via `openapi-typescript` (the spec is the single source of truth; Part 5 generates the TanStack Query hooks from the same spec)
-- `/webapps/webapp-demo/app/lib/mockData.ts` — realistic mock data factories
-- `/webapps/docs/00-openapi-and-mocking.md` — "Define the API contract first"
+- **Go backend (provided, black box):** materializes from the spec as a sibling deliverable — this plan never looks inside it, but the frontend work requires of it:
+    • runs locally with a single documented command
+    • implements every endpoint in the spec with realistic, spec-conformant data
+    • mutations reflected in subsequent reads (Parts 7–9 gates depend on it)
+    • role-aware: validates the Bearer token and rejects Viewer mutations with 403 (per Part 9)
+    • on-demand failure and latency simulation (for the error-state gates in Parts 6–7)
+    • CORS for the Vite dev origin; a seed/reset hook for E2E (Part 11)
+- `/webapps/webapp-demo/app/api/model/` — API model types generated via Orval (the spec is the single source of truth; the same Orval config adds the TanStack Query hooks in Part 5 — one generator, one type set, no parallel `openapi-typescript` output)
+- `/webapps/webapp-demo/app/mocks/` — MSW test handlers generated by the same Orval run (`mock: true`, faker-backed), for the Vitest node server only (wired in Part 1, extended in Part 11): happy-path defaults out of the box, error/latency cases via per-test overrides typed with the Orval models — never registered in the browser
+- `/webapps/webapp-demo/app/lib/mockData.ts` — deterministic mock-data factories for per-test overrides and assertions (typed with the Orval models)
+- `/webapps/docs/00-openapi-and-backend.md` — "Define the API contract first"
 
 **Quality gates:**
 - Spec validates against OpenAPI 3.1 (`redocly lint` or equivalent)
-- Generated types cover every endpoint and compile standalone (compiler errors on wrong request/response shapes)
-- Every endpoint has a handler + mock-data factory, with simulated latency and error states via query params (`?simulateError=500`) — browser verification happens at Part 1's gate
+- Generated model types cover every endpoint and compile standalone (compiler errors on wrong request/response shapes; handler compilation is verified at Part 1's gate, once `msw` is installed)
+- The Go backend, started locally, answers every endpoint per the spec (curl or spec-probe smoke check) — in-browser verification happens at Part 1's gate
+- Every endpoint has a typed test handler + mock-data factory
 
-**Review skill additions:** API contract patterns, mock data conventions, generated types usage
+**Review skill additions:** API contract patterns, mock data conventions, generated types usage, single-codegen-pipeline rule
 
 ---
 
 ### Part 1: Project Scaffold
-**What:** Initialize the demo project with Vite 8 (Rolldown bundler), React Router v8 (SPA mode, ESM-only), TypeScript 7.x, Biome 2.x, pnpm, and React Compiler enabled from day one. Wire up Part 0's MSW mock backend in the browser, plus the base test infrastructure so TDD (Phase B) works from the first part.
+**What:** Initialize the demo project with Vite 8 (Rolldown bundler), React Router v8 (SPA mode, ESM-only), TypeScript 7.x, Biome 2.x, pnpm, and React Compiler enabled from day one. Point the dev setup at Part 0's Go backend, plus the base test infrastructure so TDD (Phase B) works from the first part.
 
 **Deliverables:**
 - Working project skeleton: `pnpm install && pnpm dev` shows "Hello, StockPilot!"
@@ -206,14 +214,14 @@ description: Coding-standard compliance review for the React template and projec
 - `app/root.tsx` — root layout
 - `app/routes.ts` — single index route
 - Environment variable setup (`VITE_API_BASE_URL`, validation at build time)
-- MSW browser wiring (worker registration, dev-only start) — completes Part 0's mock backend
-- Base test infrastructure: Vitest 4 + React Testing Library + MSW node server (`test/setup.ts`) with one smoke test — Part 11 builds the full utilities, coverage thresholds, and E2E on top
+- Dev backend wiring: `VITE_API_BASE_URL` points at the locally running Go backend; one documented command (or script) starts backend + frontend together
+- Base test infrastructure: Vitest 4 + React Testing Library + MSW node server (`test/setup.ts`) using Part 0's generated test handlers (which must compile once `msw` is installed here), with one smoke test — Part 11 builds the full utilities, coverage thresholds, and E2E on top
 - `/webapps/docs/01-project-scaffold.md`
 
 **Quality gates:**
 - `tsc --noEmit` passes (strict mode)
 - `biome check .` passes with zero errors
-- `pnpm dev` serves the app with MSW intercepting — all Part 0 endpoints return realistic data in the browser
+- `pnpm dev` with the Go backend running — all Part 0 endpoints return realistic data in the browser (real HTTP visible in the network tab)
 - `pnpm test` runs and passes the smoke test
 - Project structure follows the agreed conventions
 
@@ -338,6 +346,7 @@ app/
 └── api/                     — TanStack Query server state
     ├── queryClient.ts       — QueryClient with defaults (staleTime, retry, gcTime)
     ├── http.ts              — Orval mutator delegating to the worker-proxied HTTP client (Part 4)
+    ├── model/               — generated API model types (Part 0 output — the one type set shared by hooks, tests, and handlers)
     ├── generated.ts         — TanStack Query hooks generated from the OpenAPI spec via Orval
     ├── keys.ts              — query key factories per resource (single source of truth for invalidation)
     ├── items.ts             — pagination query options, optimistic update handlers
@@ -349,7 +358,7 @@ app/
 **Dependencies to pull in:**
 - `zustand` (~2 KB)
 - `@tanstack/react-query` + `@tanstack/react-query-devtools` (devtools are excluded from production bundles automatically)
-- `orval` (dev dep — generates typed TanStack Query hooks from `/webapps/spec/openapi.yaml`; chosen over `@hey-api/openapi-ts` for its dedicated TanStack Query output and the `mutator` option, which is the exact seam needed for the worker-proxied HTTP client)
+- `orval` (dev dep — generates typed TanStack Query hooks from `/webapps/spec/openapi.yaml`; chosen over `@hey-api/openapi-ts` for its dedicated TanStack Query output and the `mutator` option, which is the exact seam needed for the worker-proxied HTTP client; also the source of the model types and MSW test handlers from Part 0 (`mock: true`, with `@faker-js/faker` as a dev dep) — one generator, one type set across app code and tests)
 
 **Deliverables:**
 - Zustand stores for auth, theme, and UI — each a single `create()` call, wrapped in `devtools` middleware with `enabled: import.meta.env.DEV`
@@ -369,6 +378,7 @@ app/
 - Auth store updates on login/logout
 - Theme toggle updates store + persists to localStorage
 - Generated hooks return typed data matching OpenAPI schemas
+- Re-running codegen produces no diff — committed Orval output is current with the spec
 - 401 response triggers logout flow
 - Paginated queries don't waterfall
 - Mutations invalidate the affected queries via the key factories — affected lists refetch automatically
@@ -396,8 +406,8 @@ app/
 **Quality gates:**
 - Dashboard loads with all sections populated
 - Loading skeletons appear while data fetches
-- Error state renders on API failure (test via `?simulateError=500`)
-- Chart renders correctly with mock data
+- Error state renders on API failure (test via the backend's failure simulation)
+- Chart renders correctly with the backend's data
 - Responsive across breakpoints
 - Viewer role: dashboard loads but CRUD actions are hidden (ad-hoc role check for now — Part 9 codifies the role-based UI system)
 
@@ -436,7 +446,7 @@ app/
 - All table states work: loading, empty, error, data
 - Mobile: cards show correctly, tap navigates to detail
 - Forms validate: required fields show errors, numeric fields reject text
-- Image upload preview works (even with mock — show placeholder)
+- Image upload preview works (even if the backend discards the file — show placeholder)
 
 **Review skill additions:** Data table conventions, form patterns, URL search param sync, optimistic update patterns, modal patterns
 
@@ -528,6 +538,7 @@ app/
     • Role-based access test (Viewer cannot see edit buttons)
 - Explicit environment decision: Vitest browser mode (stable in Vitest 4, runs component tests in a real browser) vs jsdom — pick one and document why
 - Playwright E2E smoke suite: Asgardeo login redirect round-trip, one CRUD happy path, viewer-role restrictions (the PWA manifest/service-worker check joins this suite in Part 12, when the PWA exists)
+- E2E backend: Playwright runs against the app + the locally running Go backend, seeded/reset between runs via the backend's seed hook — E2E state isolation comes from the backend, not from mocks
 - Automated accessibility checks: `vitest-axe` on key components + `@axe-core/playwright` scans of every top-level page in the E2E suite
 - Coverage thresholds: 80% branches, 80% functions, 80% lines (unit/component only — E2E excluded)
 - `/webapps/docs/11-testing.md`
@@ -537,7 +548,7 @@ app/
 - `pnpm test:e2e` runs the Playwright smoke suite and passes
 - axe reports zero violations on top-level pages and key components
 - `pnpm test:coverage` meets thresholds
-- No real network calls in tests (MSW intercepts everything)
+- No real network calls in unit/component tests (MSW node intercepts everything); E2E talks only to the local Go backend
 - Tests don't depend on test order
 
 **Review skill additions:** Test structure conventions, render utility patterns, mock patterns, automated a11y check conventions
@@ -554,7 +565,7 @@ app/
     • Merge gating: an org-level ruleset requires the `summary` check, targeted by a custom repository property on opted-in repos — legacy webapps without the marker are untouched, new template webapps are discovered with zero workflow edits
     • Hardening: actions pinned to commit SHAs, top-level `permissions: contents: read` (elevated per job only as needed), `pnpm install --frozen-lockfile`
 - `vite-plugin-pwa`: service worker precaching the app shell ONLY — API origin excluded from runtime caching (`NetworkOnly`), Cache Storage cleared on logout; install prompt
-- CD is handled by Choreo: the repo connects as a web application component and deployment happens automatically on PR merge
+- CD is handled by Choreo: the repo connects as a web application component and deployment happens automatically on PR merge; by this part the Go backend is also hosted on Choreo, so the deployed demo works end-to-end (`VITE_API_BASE_URL` points at it)
 - Environment validation at build time (missing `VITE_*` vars fail the build)
 - Error boundary component with fallback UI and "report error" button (placeholder)
 - Security headers, configured at the Cloudflare level for the app's domain (Transform Rules or a Worker — `<meta>` tags cannot deliver `frame-ancestors` or HSTS, so header-level config matters):
@@ -569,6 +580,7 @@ app/
 **Quality gates:**
 - PR workflow: all checks must pass before merge
 - Merged PR auto-deploys via Choreo; the deployed app responds with the full security header set (verify with `curl -I`)
+- The deployed demo works end-to-end against the Choreo-hosted Go backend
 - Lighthouse CI and bundle-budget jobs fail the pipeline on regression
 - Missing env vars fail at build, not runtime
 - PWA: install prompt appears in Chromium (iOS Safari has no prompt — Add to Home Screen only), offline shell works
@@ -587,7 +599,7 @@ app/
     • Removes demo route modules and pages
     • Removes demo API handlers and mock data
     • Removes demo components (inventory table, dashboard widgets, etc.)
-    • Keeps all infrastructure: auth, API client, state management, layouts, MSW setup, theme, testing, CI/CD
+    • Keeps all infrastructure: auth, API client, state management, layouts, MSW node test setup, theme, testing, CI/CD
     • Produces `/webapps/webapp-template/` directory
     • Script is versioned alongside the demo — always in sync
 - `scripts/create-app.ts` (generator CLI):
@@ -732,6 +744,7 @@ Created once Part 13 produces the template. Monthly deep scan:
 - Modules must not import from sibling modules directly
 - The demo is the source of truth — patterns are extracted, not invented in isolation
 - API calls always go through TanStack Query hooks — never raw `fetch` in components
+- API types come from one generator: the Orval output only — a second codegen pipeline from the spec, or hand-written API types, is a failing review
 - URL search params for filterable/sortable/paginated state
 
 ### Responsive Design
@@ -771,13 +784,13 @@ To kick off this project:
 
 1. All artifacts live under `/webapps/` in this repo — this prompt runs from `/webapps/PROMPT.md`
 2. Create the `webapp-review` skill (empty skeleton)
-3. Begin with **Part 0** — OpenAPI spec + MSW mock backend
+3. Begin with **Part 0** — OpenAPI spec + backend contract
 
 **First steps:**
 ```
 1. Create the empty review skill at .claude/skills/webapp-review/SKILL.md
 2. Enter plan mode and write a detailed implementation plan for Part 0:
-   OpenAPI Spec & Mock Backend for StockPilot.
+   OpenAPI Spec & Backend Contract for StockPilot.
    Save to _plans/
 ```
 
@@ -788,7 +801,7 @@ To kick off this project:
 The project is complete when:
 
 - [ ] All 15 parts (0–14) are built, reviewed, and merged
-- [ ] `pnpm dev` in `/webapps/webapp-demo/` runs the full StockPilot app with all features
+- [ ] `pnpm dev` in `/webapps/webapp-demo/` (with the Go backend running) serves the full StockPilot app with all features
 - [ ] Running the extraction script produces a clean template in `/webapps/webapp-template/`
 - [ ] Generator CLI produces a working project that passes all quality gates out of the box
 - [ ] All 15 learning guides can be followed to build StockPilot from scratch
