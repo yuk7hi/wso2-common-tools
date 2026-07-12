@@ -1,4 +1,4 @@
-# React Modular Template — Master Prompt (v7)
+# React Modular Template — Master Prompt (v8)
 
 > **Version currency:** All library versions in this prompt were verified against the npm registry on 2026-07-11. The weekly `webapp-template-audit` skill re-verifies them.
 
@@ -6,7 +6,7 @@
 
 **Goal:** Build a production-grade, modular React SPA template by first building a **full-featured demo app** (an inventory management system called "StockPilot"), then extracting reusable infrastructure into a configurable template via a strip-down script. Delivered as three artifacts: (1) the working demo, (2) the extractable template, and (3) a step-by-step learning guide that teaches someone to build the demo from scratch.
 
-**Architecture:** React Router v8 framework mode with SPA config (`ssr: false`). The frontend is a pure API consumer — all backends are separate services (Java, Go, or Ballerina). The frontend talks to a real HTTP backend from day one: a Go backend materialized from the OpenAPI 3.1 spec as soon as the spec is generated (3.1 chosen deliberately over 3.2 — codegen tooling support for 3.2 still lags). The backend's internals — including its data source — are owned by the sibling backend template + demo planned in this repo (hence the `webapp-` prefix on the frontend artifacts); this plan treats the backend as a black box behind the spec. MSW appears only in tests — a Node-side interceptor for Vitest, never registered in the browser. Mobile support via responsive design + PWA, not React Native.
+**Architecture:** React Router v8 framework mode with SPA config (`ssr: false`). The frontend is a pure API consumer — all backends are separate services (Java, Go, or Ballerina). The frontend talks to a real HTTP backend from day one: a Go backend materialized from the OpenAPI 3.1 spec as soon as the spec is generated (3.1 chosen deliberately over 3.2 — codegen tooling support for 3.2 still lags). The backend's internals — including its data source — are owned by the sibling backend template + demo planned in this repo (hence the `webapp-` prefix on the frontend artifacts); this plan treats the backend as a black box behind the spec. MSW appears only in tests — a Node-side interceptor for Vitest, never registered in the browser. Mobile support via responsive design — no PWA, no React Native.
 
 **Core principle:** The demo is the source of truth. Every standard, pattern, and convention lives in the demo first. The template is a byproduct of stripping demo-specific content. The review skill grows alongside the demo — each new pattern gets codified immediately.
 
@@ -25,7 +25,6 @@ It covers every pattern the template needs while staying realistic:
 - **State management & API:** Zustand stores + TanStack Query
 - **Responsive:** Table → card layout on mobile, sidebar → hamburger
 - **Theming:** Dark/light mode toggle
-- **PWA:** Installable, offline shell caching
 
 ### Feature set
 ```
@@ -85,7 +84,7 @@ What stays:
 - Oxygen UI setup with theming
 - Layout shell (sidebar, header, breadcrumbs, error boundaries)
 - MSW node test infrastructure (typed test handlers pattern — no browser mocking; generated projects point at their real backend)
-- PWA setup, CI/CD, testing infrastructure
+- CI/CD, testing infrastructure
 - Environment validation, error handling patterns
 
 The strip-down script is the single source of truth for what's "template" vs "demo." Running it produces a clean starting point. A new project runs the generator CLI (Part 13) → gets a working skeleton.
@@ -178,7 +177,7 @@ description: Coding-standard compliance review for the React template and projec
 **What:** Define the full StockPilot API contract and the type-generation pipeline. Generating the spec materializes the Go backend — a sibling deliverable built to the spec, which this plan treats as a black box and simply consumes. MSW enters only as test infrastructure: generated handlers for the Vitest node server (wired in Part 1), never registered in the browser. Codegen is a single Orval pipeline: model types now, TanStack Query hooks from the same config in Part 5 — one type set for app code, tests, and handlers.
 
 **Deliverables:**
-- `/webapps/spec/openapi.yaml` — complete API spec for all resources (OpenAPI 3.1)
+- `/webapps/spec/openapi.yaml` — complete API spec for all resources (OpenAPI 3.1), including cross-resource semantics the UI depends on — e.g. `DELETE /categories/{id}` with items assigned returns 409 + usage count (drives Part 8's warning)
 - **Go backend (provided, black box):** materializes from the spec as a sibling deliverable — this plan never looks inside it, but the frontend work requires of it:
     • runs locally with a single documented command
     • implements every endpoint in the spec with realistic, spec-conformant data
@@ -210,6 +209,7 @@ description: Coding-standard compliance review for the React template and projec
 - `react-router.config.ts` with `ssr: false`
 - `tsconfig.json` with path aliases and ES2022 target (React Router v8 is ESM-only; TS 7's compiler drops the JS Compiler API — safe here since the stack uses `tsx`, Vite/Vitest, and Biome instead of `ts-node`/`ts-jest`/`ts-loader`/`typescript-eslint`, none of which this project depends on; `esModuleInterop` always enabled, `classic` resolution removed)
 - `.nvmrc` + `engines` field pinning Node 24 LTS (React Router v8 supports Active LTS only)
+- Repo layout: standalone-per-directory, no pnpm workspace — `webapp-demo/` and `webapp-template/` each own their lockfile, so the extraction output and generated apps stay standalone and CI's `working-directory` parameterization stays trivial
 - `biome.json` with lint + format rules, including `useFilenamingConvention` enforcing the naming standard (see Constraints)
 - `app/root.tsx` — root layout
 - `app/routes.ts` — single index route
@@ -340,7 +340,7 @@ description: Coding-standard compliance review for the React template and projec
 ```
 app/
 ├── store/                   — Zustand client state
-│   ├── authStore.ts         — user, role, isAuthenticated (synced with Asgardeo)
+│   ├── authStore.ts         — user, role, isAuthenticated (one-way mirror of the SDK)
 │   ├── themeStore.ts        — dark/light mode, persisted via `zustand/middleware` persist
 │   └── uiStore.ts           — sidebar open, active modal, toast queue
 └── api/                     — TanStack Query server state
@@ -361,7 +361,7 @@ app/
 - `orval` (dev dep — generates typed TanStack Query hooks from `/webapps/spec/openapi.yaml`; chosen over `@hey-api/openapi-ts` for its dedicated TanStack Query output and the `mutator` option, which is the exact seam needed for the worker-proxied HTTP client; also the source of the model types and MSW test handlers from Part 0 (`mock: true`, with `@faker-js/faker` as a dev dep) — one generator, one type set across app code and tests)
 
 **Deliverables:**
-- Zustand stores for auth, theme, and UI — each a single `create()` call, wrapped in `devtools` middleware with `enabled: import.meta.env.DEV`
+- Zustand stores for auth, theme, and UI — each a single `create()` call, wrapped in `devtools` middleware with `enabled: import.meta.env.DEV`; authStore syncs one-way from the SDK (SDK events → store) and never writes auth state back — one source of truth
 - Theme store persists to localStorage via Zustand's `persist` middleware
 - `QueryClientProvider` wrapping the app with sensible defaults
 - Query key factories per resource in `keys.ts` — every `invalidateQueries` call references a factory, never a hand-typed key array
@@ -522,7 +522,7 @@ app/
 ---
 
 ### Part 11: Testing Infrastructure
-**What:** Set up testing with Vitest 4 + React Testing Library + MSW, plus a small Playwright E2E smoke suite for the flows unit tests can't reach (auth redirects, role-based UI, PWA installability).
+**What:** Set up testing with Vitest 4 + React Testing Library + MSW, plus a small Playwright E2E smoke suite for the flows unit tests can't reach (auth redirects, role-based UI).
 
 **Deliverables:**
 - Extends the base Vitest + MSW setup from Part 1 with the full provider stack
@@ -537,7 +537,7 @@ app/
     • Auth guard test (protected route redirects unauthenticated)
     • Role-based access test (Viewer cannot see edit buttons)
 - Explicit environment decision: Vitest browser mode (stable in Vitest 4, runs component tests in a real browser) vs jsdom — pick one and document why
-- Playwright E2E smoke suite: Asgardeo login redirect round-trip, one CRUD happy path, viewer-role restrictions (the PWA manifest/service-worker check joins this suite in Part 12, when the PWA exists)
+- Playwright E2E smoke suite: Asgardeo login redirect round-trip, one CRUD happy path, viewer-role restrictions
 - E2E backend: Playwright runs against the app + the locally running Go backend, seeded/reset between runs via the backend's seed hook — E2E state isolation comes from the backend, not from mocks
 - Automated accessibility checks: `vitest-axe` on key components + `@axe-core/playwright` scans of every top-level page in the E2E suite
 - Coverage thresholds: 80% branches, 80% functions, 80% lines (unit/component only — E2E excluded)
@@ -555,8 +555,8 @@ app/
 
 ---
 
-### Part 12: CI/CD, PWA & Production Readiness
-**What:** GitHub Actions pipeline, PWA setup, Choreo deployment, env validation, error monitoring placeholder. Deployment is handled by Choreo — merging a PR on the connected repo deploys automatically, so the CI pipeline's job is to gate what merges.
+### Part 12: CI/CD & Production Readiness
+**What:** GitHub Actions pipeline, Choreo deployment, env validation, error monitoring placeholder. Deployment is handled by Choreo — merging a PR on the connected repo deploys automatically, so the CI pipeline's job is to gate what merges.
 
 **Deliverables:**
 - GitHub Actions, structured for the monorepo architecture:
@@ -564,7 +564,6 @@ app/
     • Per-monorepo umbrella workflow at the repo root `.github/workflows/` (GitHub only reads workflows there): always runs on PRs, auto-discovers template webapps via the generator-stamped `package.json` marker, runs the reusable workflow for changed apps only (`dorny/paths-filter`), and ends in a `summary` job with one stable check name that always reports — naive path-filtered required checks hang PRs that don't touch a webapp
     • Merge gating: an org-level ruleset requires the `summary` check, targeted by a custom repository property on opted-in repos — legacy webapps without the marker are untouched, new template webapps are discovered with zero workflow edits
     • Hardening: actions pinned to commit SHAs, top-level `permissions: contents: read` (elevated per job only as needed), `pnpm install --frozen-lockfile`
-- `vite-plugin-pwa`: service worker precaching the app shell ONLY — API origin excluded from runtime caching (`NetworkOnly`), Cache Storage cleared on logout; install prompt
 - CD is handled by Choreo: the repo connects as a web application component and deployment happens automatically on PR merge; by this part the Go backend is also hosted on Choreo, so the deployed demo works end-to-end (`VITE_API_BASE_URL` points at it)
 - Environment validation at build time (missing `VITE_*` vars fail the build)
 - Error boundary component with fallback UI and "report error" button (placeholder)
@@ -572,7 +571,7 @@ app/
     • CSP: `default-src 'self'; script-src 'self'; connect-src 'self' <API origin> <Asgardeo origin>; frame-src <Asgardeo origin>; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'` — `frame-src` is required by silent sign-in and `worker-src blob:` by webWorker token storage; a naive strict CSP silently breaks both
     • `style-src`: Emotion injects inline styles — either accept `style-src 'unsafe-inline'` (styles only, scripts stay strict) and document the tradeoff, or inject a fresh per-request nonce via a Cloudflare Worker (HTMLRewriter on the HTML + matching CSP header, wired into Emotion's `CacheProvider`); a build-time nonce is a constant and adds nothing
     • Companions: `Strict-Transport-Security` (or Cloudflare's HSTS setting), `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin` (OIDC redirects carry `code`/`state` in URLs), `Permissions-Policy`
-- Lighthouse CI (`@lhci/cli`) job asserting Performance ≥ 90, Accessibility ≥ 95, Best Practices ≥ 90 on the built app (Lighthouse removed its PWA category in v12 — installability is verified by the Playwright manifest/service-worker check instead)
+- Lighthouse CI (`@lhci/cli`) job asserting Performance ≥ 90, Accessibility ≥ 95, Best Practices ≥ 90 on the built app
 - Bundle-size budgets enforced in CI (`size-limit` or equivalent), set per entry chunk — watch closely, since Oxygen UI bundles all of MUI v7 + MUI X
 - `CONTRIBUTING.md`: how to run the gates locally, PR expectations, review process
 - `/webapps/docs/12-cicd-and-production.md`
@@ -583,11 +582,9 @@ app/
 - The deployed demo works end-to-end against the Choreo-hosted Go backend
 - Lighthouse CI and bundle-budget jobs fail the pipeline on regression
 - Missing env vars fail at build, not runtime
-- PWA: install prompt appears in Chromium (iOS Safari has no prompt — Add to Home Screen only), offline shell works
-- Playwright: PWA manifest + service worker registration verified; API responses never appear in Cache Storage
 - Playwright: login and silent sign-in work with the production CSP enforced
 
-**Review skill additions:** CI/CD conventions, Choreo deployment conventions, PWA checklist
+**Review skill additions:** CI/CD conventions, Choreo deployment conventions
 
 ---
 
@@ -806,8 +803,8 @@ The project is complete when:
 - [ ] Generator CLI produces a working project that passes all quality gates out of the box
 - [ ] All 15 learning guides can be followed to build StockPilot from scratch
 - [ ] `webapp-review` skill contains rules for every pattern
-- [ ] The app works on mobile web (responsive + PWA installable)
-- [ ] Lighthouse CI green: Performance ≥ 90, Accessibility ≥ 95, Best Practices ≥ 90; PWA installability verified via the Playwright manifest + service worker check
+- [ ] The app works on mobile web (responsive across all pages)
+- [ ] Lighthouse CI green: Performance ≥ 90, Accessibility ≥ 95, Best Practices ≥ 90
 - [ ] Zero HIGH/CRITICAL `pnpm audit` findings in both demo and template
 - [ ] `webapp-template-audit` and `webapp-template-security-scan` skills are active
 - [ ] CI/CD pipeline catches regressions before merge
